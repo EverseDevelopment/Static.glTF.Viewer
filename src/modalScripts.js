@@ -9,7 +9,7 @@ var span = document.getElementsByClassName("close")[0];
 
 // When the user clicks on the image, open the modal
 img.onclick = function() {
-  modal.style.display = "block";
+  modal.style.display = "flex";
 }
 
 // When the user clicks on <span> (x), close the modal
