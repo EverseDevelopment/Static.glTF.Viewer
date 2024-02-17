@@ -1,29 +1,36 @@
-name: Deploy for S3 Deploy
-on: [push]
+name: Build and Deploy to S3
+
+on:
+  push:
+    branches:
+      - main
+
 jobs:
-  run:
+  build-and-deploy:
     runs-on: ubuntu-latest
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.EVERSE_AWS_S3_BUCKET_SECRET_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.EVERSE_AWS_S3_BUCKET_SECRET_KEY_SECRET }}
+
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: '14'
 
       - name: Install dependencies
-        run: yarn
+        run: npm install
 
-      - name: Build
-        run: yarn build
+      - name: Build the application
+        run: npm run build
 
-      - name: Deploy
-        uses: reggionick/s3-deploy@v4
+      - name: Deploy to S3
+        uses: jakejarvis/s3-sync-action@v0.5.1
         with:
-          folder: build
-          bucket: ${{ secrets.EVERSE_AWS_S3_BUCKET_NAME_GLTF_VIEWER }}
-          bucket-region: us-east-1
-          dist-id: ${{ secrets.EVERSE_AWS_CLOUDFRONT_DISTRIBUTION_ID_GLTF_VIEWER }}
-          invalidation: /
-          delete-removed: true
-          no-cache: true
-          private: true
-          files-to-include: '{.*/**,**}'
+          args: --acl public-read --delete
+        env:
+          AWS_S3_BUCKET: ${{ secrets.EVERSE_AWS_S3_BUCKET_NAME_GLTF_VIEWER }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.EVERSE_AWS_S3_BUCKET_SECRET_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.EVERSE_AWS_S3_BUCKET_SECRET_KEY_SECRET }}
+          AWS_REGION: 'us-east-1' # or your AWS region
+          SOURCE_DIR: 'dist' # or the directory where your build artifacts are located
