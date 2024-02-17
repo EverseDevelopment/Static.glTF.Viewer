@@ -24,6 +24,9 @@ jobs:
       - name: Build the application
         run: npm run build
 
+      - name: List directory structure
+        run: ls -alR
+        
       - name: Deploy to S3
         uses: jakejarvis/s3-sync-action@v0.5.1
         with:
