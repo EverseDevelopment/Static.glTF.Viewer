@@ -1,0 +1,29 @@
+name: Deploy for S3 Deploy
+on: [push]
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.EVERSE_AWS_S3_BUCKET_SECRET_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.EVERSE_AWS_S3_BUCKET_SECRET_KEY_SECRET }}
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install dependencies
+        run: yarn
+
+      - name: Build
+        run: yarn build
+
+      - name: Deploy
+        uses: reggionick/s3-deploy@v4
+        with:
+          folder: build
+          bucket: ${{ secrets.EVERSE_AWS_S3_BUCKET_NAME_GLTF_VIEWER }}
+          bucket-region: us-east-1
+          dist-id: ${{ secrets.EVERSE_AWS_CLOUDFRONT_DISTRIBUTION_ID_GLTF_VIEWER }}
+          invalidation: /
+          delete-removed: true
+          no-cache: true
+          private: true
+          files-to-include: '{.*/**,**}'
