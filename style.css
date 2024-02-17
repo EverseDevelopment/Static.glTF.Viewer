@@ -536,3 +536,7 @@ footer .separator {
     padding: 40px 20px;
   }
 }
+
+.modal-main-inline {
+  display:contents !important;
+}
