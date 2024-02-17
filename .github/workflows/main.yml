@@ -33,4 +33,4 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.EVERSE_AWS_S3_BUCKET_SECRET_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.EVERSE_AWS_S3_BUCKET_SECRET_KEY_SECRET }}
           AWS_REGION: 'us-east-1' # or your AWS region
-          SOURCE_DIR: 'dist' # or the directory where your build artifacts are located
+          SOURCE_DIR: 'build' # or the directory where your build artifacts are located
