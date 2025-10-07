@@ -174,8 +174,38 @@ export class Viewer {
 		this.axesRenderer.setSize(this.axesDiv.clientWidth, this.axesDiv.clientHeight);
 	}
 
+	/**
+	 * Checks if a URL is an S3 signed URL
+	 * @param {string} url - The URL to check
+	 * @returns {boolean} - True if it's an S3 signed URL
+	 */
+	isS3SignedUrl(url) {
+		try {
+			const urlObj = new URL(url);
+			// Check if it's an S3 URL (s3.amazonaws.com or s3-*.amazonaws.com)
+			const isS3Host = urlObj.hostname.includes('s3.amazonaws.com') || 
+							urlObj.hostname.includes('s3-') && urlObj.hostname.includes('.amazonaws.com');
+			
+			// Check if it has S3 signature parameters
+			const hasSignature = urlObj.searchParams.has('Signature') || 
+								urlObj.searchParams.has('X-Amz-Signature') ||
+								urlObj.searchParams.has('AWSAccessKeyId') ||
+								urlObj.searchParams.has('X-Amz-Credential');
+			
+			return isS3Host && hasSignature;
+		} catch {
+			return false;
+		}
+	}
+
 	load(url, rootPath, assetMap) {
 		const baseURL = LoaderUtils.extractUrlBase(url);
+		const isS3SignedUrl = this.isS3SignedUrl(url);
+
+		// For S3 signed URLs, use a custom loading approach
+		if (isS3SignedUrl) {
+			return this.loadS3SignedUrl(url, rootPath, assetMap);
+		}
 
 		// Load.
 		return new Promise((resolve, reject) => {
@@ -236,6 +266,202 @@ export class Viewer {
 				undefined,
 				reject,
 			);
+		});
+	}
+
+	/**
+	 * Loads a glTF model from an S3 signed URL with proper CORS handling
+	 * @param {string} url - The S3 signed URL
+	 * @param {string} rootPath - The root path for assets
+	 * @param {Map<string, File>} assetMap - Map of asset files
+	 * @returns {Promise} - Promise that resolves with the loaded glTF
+	 */
+	loadS3SignedUrl(url, rootPath, assetMap) {
+		return new Promise((resolve, reject) => {
+			console.log('Loading S3 signed URL:', url.substring(0, 200) + '...');
+			console.log('URL length:', url.length);
+			console.log('URL contains signature:', url.includes('Signature'));
+			console.log('URL contains expires:', url.includes('Expires'));
+			
+			// Try direct loading with GLTFLoader first (simpler approach)
+			const baseURL = LoaderUtils.extractUrlBase(url);
+			console.log('Base URL extracted:', baseURL);
+			
+			// Set up URL modifier for relative assets
+			MANAGER.setURLModifier((assetUrl, path) => {
+				// For S3 signed URLs, we need to handle relative assets differently
+				// Try to construct the full S3 URL for assets
+				if (assetUrl.startsWith('./') || assetUrl.startsWith('../') || !assetUrl.includes('://')) {
+					// This is a relative URL, construct the full S3 URL
+					const fullAssetUrl = new URL(assetUrl, baseURL).toString();
+					return fullAssetUrl;
+				}
+				return assetUrl;
+			});
+
+			// Create GLTFLoader with no crossOrigin for S3 signed URLs
+			const loader = new GLTFLoader(MANAGER)
+				.setCrossOrigin(null) // Don't set crossOrigin for S3 signed URLs
+				.setDRACOLoader(DRACO_LOADER)
+				.setKTX2Loader(KTX2_LOADER.detectSupport(this.renderer))
+				.setMeshoptDecoder(MeshoptDecoder);
+
+			console.log('Starting GLTFLoader with URL...');
+			
+			// Load the glTF directly from the signed URL
+			loader.load(
+				url,
+				(gltf) => {
+					console.log('S3 signed URL loaded successfully');
+					window.VIEWER.json = gltf;
+
+					const scene = gltf.scene || gltf.scenes[0];
+					const clips = gltf.animations || [];
+
+					if (!scene) {
+						throw new Error(
+							'This model contains no scene, and cannot be viewed here. However,' +
+								' it may contain individual 3D resources.',
+						);
+					}
+
+					this.setContent(scene, clips);
+					resolve(gltf);
+				},
+				(progress) => {
+					console.log('Loading progress:', progress);
+				},
+				(error) => {
+					console.error('Direct S3 loading failed, trying fetch approach:', error);
+					console.error('Error details:', {
+						message: error.message,
+						name: error.name,
+						stack: error.stack
+					});
+					
+					// If direct loading fails, try the fetch approach
+					this.loadS3SignedUrlWithFetch(url, rootPath, assetMap)
+						.then(resolve)
+						.catch(reject);
+				}
+			);
+		});
+	}
+
+	/**
+	 * Fallback method using fetch for S3 signed URLs
+	 */
+	loadS3SignedUrlWithFetch(url, rootPath, assetMap) {
+		return new Promise((resolve, reject) => {
+			console.log('Trying fetch approach for S3 signed URL:', url);
+			
+			// First, fetch the glTF file directly to handle CORS properly
+			fetch(url, {
+				method: 'GET',
+				mode: 'cors',
+				credentials: 'omit'
+				// Remove custom headers to avoid CORS preflight issues
+			})
+			.then(response => {
+				console.log('S3 fetch response:', {
+					status: response.status,
+					statusText: response.statusText,
+					headers: Object.fromEntries(response.headers.entries()),
+					url: response.url
+				});
+				
+				if (!response.ok) {
+					if (response.status === 403) {
+						throw new Error(`CORS_403: Access denied. The S3 bucket may not have CORS configured for your domain. Status: ${response.status} ${response.statusText}`);
+					} else if (response.status === 404) {
+						throw new Error(`CORS_404: File not found. Status: ${response.status} ${response.statusText}`);
+					} else {
+						throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+					}
+				}
+				
+				// Check if we're getting HTML instead of binary data
+				const contentType = response.headers.get('content-type');
+				console.log('Response content-type:', contentType);
+				
+				if (contentType && contentType.includes('text/html')) {
+					// We're getting HTML instead of the GLB file
+					return response.text().then(html => {
+						console.error('Got HTML response instead of GLB file:', html.substring(0, 500));
+						throw new Error('HTML_RESPONSE: Received HTML page instead of GLB file. The signed URL may be invalid or expired.');
+					});
+				}
+				
+				return response.blob();
+			})
+			.then(blob => {
+				// Create a blob URL for the glTF file
+				const blobURL = URL.createObjectURL(blob);
+				
+				// Set up URL modifier for relative assets
+				const baseURL = LoaderUtils.extractUrlBase(url);
+				MANAGER.setURLModifier((assetUrl, path) => {
+					// For S3 signed URLs, we need to handle relative assets differently
+					// Try to construct the full S3 URL for assets
+					if (assetUrl.startsWith('./') || assetUrl.startsWith('../') || !assetUrl.includes('://')) {
+						// This is a relative URL, construct the full S3 URL
+						const fullAssetUrl = new URL(assetUrl, baseURL).toString();
+						return fullAssetUrl;
+					}
+					return assetUrl;
+				});
+
+				// Create GLTFLoader with no crossOrigin for S3 URLs
+				const loader = new GLTFLoader(MANAGER)
+					.setCrossOrigin(null) // Don't set crossOrigin for S3 signed URLs
+					.setDRACOLoader(DRACO_LOADER)
+					.setKTX2Loader(KTX2_LOADER.detectSupport(this.renderer))
+					.setMeshoptDecoder(MeshoptDecoder);
+
+				// Load the glTF from the blob URL
+				loader.load(
+					blobURL,
+					(gltf) => {
+						window.VIEWER.json = gltf;
+
+						const scene = gltf.scene || gltf.scenes[0];
+						const clips = gltf.animations || [];
+
+						if (!scene) {
+							throw new Error(
+								'This model contains no scene, and cannot be viewed here. However,' +
+									' it may contain individual 3D resources.',
+							);
+						}
+
+						this.setContent(scene, clips);
+
+						// Clean up the blob URL
+						URL.revokeObjectURL(blobURL);
+
+						resolve(gltf);
+					},
+					undefined,
+					(error) => {
+						URL.revokeObjectURL(blobURL);
+						reject(error);
+					}
+				);
+			})
+			.catch(error => {
+				console.error('S3 fetch error:', error);
+				
+				// Enhanced CORS error detection
+				if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
+					reject(new Error('CORS_ERROR: Failed to fetch the file. This is likely a CORS issue. The S3 bucket needs to be configured to allow requests from your domain.'));
+				} else if (error.message.includes('CORS_403')) {
+					reject(error);
+				} else if (error.message.includes('CORS_404')) {
+					reject(error);
+				} else {
+					reject(error);
+				}
+			});
 		});
 	}
 

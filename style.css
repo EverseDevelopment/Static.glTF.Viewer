@@ -283,7 +283,8 @@ header a {
 
 footer {
   display: flex;
-  background: transparent;
+  background: transparent !important;
+  background-color: transparent !important;
   padding: 0 2em;
   height: 4rem;
   line-height: 4rem;
@@ -301,7 +302,8 @@ footer {
 footer a {
   height: 100%;
   /* Match the height of the header */
-  background: transparent;
+  background: transparent !important;
+  background-color: transparent !important;
   display: flex;
   align-items: center;
   /* Center the image vertically */
