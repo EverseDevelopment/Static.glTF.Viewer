@@ -26,14 +26,13 @@ jobs:
 
       - name: List directory structure
         run: ls -alR
-        
+
       - name: Deploy to S3
-        uses: jakejarvis/s3-sync-action@v0.5.1
-        with:
-          args: --delete
+        run: |
+          aws s3 sync dist s3://$AWS_S3_BUCKET/$S3_TARGET_FOLDER --delete --region $AWS_REGION
         env:
           AWS_S3_BUCKET: ${{ secrets.EVERSE_AWS_S3_BUCKET_NAME_GLTF_VIEWER }}
+          S3_TARGET_FOLDER: ${{ secrets.EVERSE_AWS_S3_TARGET_FOLDER_GLTF_VIEWER }}
           AWS_ACCESS_KEY_ID: ${{ secrets.EVERSE_AWS_S3_BUCKET_SECRET_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.EVERSE_AWS_S3_BUCKET_SECRET_KEY_SECRET }}
-          AWS_REGION: 'us-east-1' # or your AWS region
-          SOURCE_DIR: 'dist' # or the directory where your build artifacts are located
+          AWS_REGION: 'us-east-1'
