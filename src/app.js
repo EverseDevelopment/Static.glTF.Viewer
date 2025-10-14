@@ -250,7 +250,10 @@ class App {
         let message = (error || {}).message || error.toString();
         
         if (message.includes('CORS_ERROR') || message.includes('Failed to fetch')) {
-            message = 'CORS Error: Unable to load the glTF file from the S3 URL.\n\n' +
+            const isZipFile = url.toLowerCase().endsWith('.zip');
+            const fileType = isZipFile ? 'ZIP file' : 'glTF file';
+            
+            message = `CORS Error: Unable to load the ${fileType} from the S3 URL.\n\n` +
                      'This is a CORS (Cross-Origin Resource Sharing) issue. The S3 bucket needs to be configured to allow requests from your domain.\n\n' +
                      'To fix this, add the following CORS configuration to your S3 bucket:\n\n' +
                      '{\n' +
@@ -266,20 +269,34 @@ class App {
                      '}\n\n' +
                      'Note: For signed URLs, make sure your CORS policy allows the specific headers that AWS uses in the signature.';
         } else if (message.includes('CORS_403')) {
-            message = 'Access Denied (403): The S3 bucket is blocking requests from your domain.\n\n' +
+            const isZipFile = url.toLowerCase().endsWith('.zip');
+            const fileType = isZipFile ? 'ZIP file' : 'glTF file';
+            message = `Access Denied (403): The S3 bucket is blocking requests from your domain.\n\n` +
                      'This is a CORS configuration issue. The bucket owner needs to add your domain to the CORS allowed origins.';
         } else if (message.includes('CORS_404')) {
-            message = 'File Not Found (404): The glTF file was not found at the provided URL.\n\n' +
+            const isZipFile = url.toLowerCase().endsWith('.zip');
+            const fileType = isZipFile ? 'ZIP file' : 'glTF file';
+            message = `File Not Found (404): The ${fileType} was not found at the provided URL.\n\n` +
                      'The file may have been moved, deleted, or the URL may be incorrect.';
+        } else if (message.includes('No GLTF file found in the ZIP archive')) {
+            message = 'ZIP Archive Error: No GLTF file found in the ZIP archive.\n\n' +
+                     'The ZIP file must contain at least one .gltf file to be viewable. Please check that your ZIP file contains:\n' +
+                     '• A .gltf file (required)\n' +
+                     '• Associated .bin files (if referenced by the GLTF)\n' +
+                     '• Texture files (.jpg, .png, .webp) if referenced by the GLTF';
         } else if (message.match(/ProgressEvent/) || message.match(/Failed to fetch/)) {
-            message = 'Unable to load the glTF file from the provided URL. This could be due to:\n' +
+            const isZipFile = url.toLowerCase().endsWith('.zip');
+            const fileType = isZipFile ? 'ZIP file' : 'glTF file';
+            message = `Unable to load the ${fileType} from the provided URL. This could be due to:\n` +
                      '• The URL has expired (S3 signed URLs have time limits)\n' +
                      '• Network connectivity issues\n' +
                      '• CORS restrictions\n' +
                      '• The file is not accessible\n\n' +
                      'Please check the URL and try again.';
         } else if (message.includes('HTML_RESPONSE')) {
-            message = 'Invalid Response: The server returned an HTML page instead of the GLB file.\n\n' +
+            const isZipFile = url.toLowerCase().endsWith('.zip');
+            const fileType = isZipFile ? 'ZIP file' : 'GLB file';
+            message = `Invalid Response: The server returned an HTML page instead of the ${fileType}.\n\n` +
                      'This usually means:\n' +
                      '• The signed URL has expired\n' +
                      '• The signed URL is malformed\n' +
@@ -291,9 +308,13 @@ class App {
         } else if (error && error.target && error.target instanceof Image) {
             message = 'Missing texture: ' + error.target.src.split('/').pop();
         } else if (message.match(/404/)) {
-            message = 'The glTF file was not found at the provided URL. The file may have been moved or deleted.';
+            const isZipFile = url.toLowerCase().endsWith('.zip');
+            const fileType = isZipFile ? 'ZIP file' : 'glTF file';
+            message = `The ${fileType} was not found at the provided URL. The file may have been moved or deleted.`;
         } else if (message.match(/403/)) {
-            message = 'Access denied to the glTF file. The URL may have expired or you may not have permission to access this file.';
+            const isZipFile = url.toLowerCase().endsWith('.zip');
+            const fileType = isZipFile ? 'ZIP file' : 'glTF file';
+            message = `Access denied to the ${fileType}. The URL may have expired or you may not have permission to access this file.`;
         }
         
         window.alert(message);

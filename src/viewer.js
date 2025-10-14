@@ -29,6 +29,7 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import JSZip from 'jszip';
 
 import { GUI } from 'dat.gui';
 
@@ -198,9 +199,30 @@ export class Viewer {
 		}
 	}
 
+	/**
+	 * Checks if a URL points to a ZIP file
+	 * @param {string} url - The URL to check
+	 * @returns {boolean} - True if it's a ZIP file
+	 */
+	isZipFile(url) {
+		try {
+			const urlObj = new URL(url);
+			const pathname = urlObj.pathname.toLowerCase();
+			return pathname.endsWith('.zip');
+		} catch {
+			return false;
+		}
+	}
+
 	load(url, rootPath, assetMap) {
 		const baseURL = LoaderUtils.extractUrlBase(url);
 		const isS3SignedUrl = this.isS3SignedUrl(url);
+		const isZip = this.isZipFile(url);
+
+		// For ZIP files, use ZIP loading approach
+		if (isZip) {
+			return this.loadZipFile(url, rootPath, assetMap);
+		}
 
 		// For S3 signed URLs, use a custom loading approach
 		if (isS3SignedUrl) {
@@ -346,6 +368,189 @@ export class Viewer {
 				}
 			);
 		});
+	}
+
+	/**
+	 * Loads a glTF model from a ZIP file
+	 * @param {string} url - The ZIP file URL
+	 * @param {string} rootPath - The root path for assets
+	 * @param {Map<string, File>} assetMap - Map of asset files
+	 * @returns {Promise} - Promise that resolves with the loaded glTF
+	 */
+	loadZipFile(url, rootPath, assetMap) {
+		return new Promise((resolve, reject) => {
+			console.log('Loading ZIP file:', url);
+			
+			// First, fetch the ZIP file
+			fetch(url, {
+				method: 'GET',
+				mode: 'cors',
+				credentials: 'omit'
+			})
+			.then(response => {
+				console.log('ZIP fetch response:', {
+					status: response.status,
+					statusText: response.statusText,
+					headers: Object.fromEntries(response.headers.entries()),
+					url: response.url
+				});
+				
+				if (!response.ok) {
+					if (response.status === 403) {
+						throw new Error(`CORS_403: Access denied. The S3 bucket may not have CORS configured for your domain. Status: ${response.status} ${response.statusText}`);
+					} else if (response.status === 404) {
+						throw new Error(`CORS_404: File not found. Status: ${response.status} ${response.statusText}`);
+					} else {
+						throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+					}
+				}
+				
+				return response.blob();
+			})
+			.then(blob => {
+				console.log('ZIP blob received, size:', blob.size);
+				
+				// Extract the ZIP file
+				return JSZip.loadAsync(blob);
+			})
+			.then(zip => {
+				console.log('ZIP file loaded, files:', Object.keys(zip.files));
+				
+				// Find the main GLTF file
+				const gltfFiles = Object.keys(zip.files).filter(name => 
+					name.toLowerCase().endsWith('.gltf') && !zip.files[name].dir
+				);
+				
+				if (gltfFiles.length === 0) {
+					throw new Error('No GLTF file found in the ZIP archive');
+				}
+				
+				const mainGltfFile = gltfFiles[0]; // Use the first GLTF file found
+				console.log('Main GLTF file:', mainGltfFile);
+				
+				// Extract all files and create a file map
+				const extractedFiles = new Map();
+				const blobURLs = [];
+				
+				// Process all files in the ZIP
+				const filePromises = Object.keys(zip.files).map(fileName => {
+					const zipFile = zip.files[fileName];
+					if (zipFile.dir) return Promise.resolve();
+					
+					return zipFile.async('blob').then(blob => {
+						// Create a File object from the blob
+						const file = new File([blob], fileName, { type: this.getMimeType(fileName) });
+						extractedFiles.set(fileName, file);
+						
+						// Create blob URL for the file
+						const blobURL = URL.createObjectURL(blob);
+						blobURLs.push(blobURL);
+						
+						console.log('Extracted file:', fileName, 'size:', blob.size);
+					});
+				});
+				
+				return Promise.all(filePromises).then(() => {
+					// Create blob URL for the main GLTF file
+					const mainGltfBlob = extractedFiles.get(mainGltfFile);
+					const mainGltfBlobURL = URL.createObjectURL(mainGltfBlob);
+					blobURLs.push(mainGltfBlobURL);
+					
+					// Set up URL modifier to use extracted files
+					MANAGER.setURLModifier((assetUrl, path) => {
+						// Decode the URL in case it's encoded
+						const decodedUrl = decodeURI(assetUrl);
+						
+						// Check if we have this file in our extracted files
+						if (extractedFiles.has(decodedUrl)) {
+							const file = extractedFiles.get(decodedUrl);
+							const blobURL = URL.createObjectURL(file);
+							blobURLs.push(blobURL);
+							return blobURL;
+						}
+						
+						// If not found, return the original URL
+						return assetUrl;
+					});
+					
+					// Create GLTFLoader
+					const loader = new GLTFLoader(MANAGER)
+						.setCrossOrigin('anonymous')
+						.setDRACOLoader(DRACO_LOADER)
+						.setKTX2Loader(KTX2_LOADER.detectSupport(this.renderer))
+						.setMeshoptDecoder(MeshoptDecoder);
+					
+					// Load the GLTF from the blob URL
+					loader.load(
+						mainGltfBlobURL,
+						(gltf) => {
+							console.log('ZIP GLTF loaded successfully');
+							window.VIEWER.json = gltf;
+
+							const scene = gltf.scene || gltf.scenes[0];
+							const clips = gltf.animations || [];
+
+							if (!scene) {
+								throw new Error(
+									'This model contains no scene, and cannot be viewed here. However,' +
+										' it may contain individual 3D resources.',
+								);
+							}
+
+							this.setContent(scene, clips);
+
+							// Clean up blob URLs
+							blobURLs.forEach(URL.revokeObjectURL);
+
+							resolve(gltf);
+						},
+						(progress) => {
+							console.log('ZIP GLTF loading progress:', progress);
+						},
+						(error) => {
+							// Clean up blob URLs on error
+							blobURLs.forEach(URL.revokeObjectURL);
+							reject(error);
+						}
+					);
+				});
+			})
+			.catch(error => {
+				console.error('ZIP loading error:', error);
+				
+				// Enhanced CORS error detection
+				if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
+					reject(new Error('CORS_ERROR: Failed to fetch the ZIP file. This is likely a CORS issue. The S3 bucket needs to be configured to allow requests from your domain.'));
+				} else if (error.message.includes('CORS_403')) {
+					reject(error);
+				} else if (error.message.includes('CORS_404')) {
+					reject(error);
+				} else {
+					reject(error);
+				}
+			});
+		});
+	}
+
+	/**
+	 * Gets the MIME type for a file based on its extension
+	 * @param {string} fileName - The file name
+	 * @returns {string} - The MIME type
+	 */
+	getMimeType(fileName) {
+		const ext = fileName.toLowerCase().split('.').pop();
+		const mimeTypes = {
+			'gltf': 'model/gltf+json',
+			'glb': 'model/gltf-binary',
+			'bin': 'application/octet-stream',
+			'jpg': 'image/jpeg',
+			'jpeg': 'image/jpeg',
+			'png': 'image/png',
+			'webp': 'image/webp',
+			'ktx2': 'image/ktx2',
+			'draco': 'application/octet-stream'
+		};
+		return mimeTypes[ext] || 'application/octet-stream';
 	}
 
 	/**
