@@ -216,16 +216,25 @@ export class Viewer {
 
 	load(url, rootPath, assetMap) {
 		const baseURL = LoaderUtils.extractUrlBase(url);
-		const isS3SignedUrl = this.isS3SignedUrl(url);
 		const isZip = this.isZipFile(url);
+		const isS3SignedUrl = this.isS3SignedUrl(url);
 
-		// For ZIP files, use ZIP loading approach
+		console.log('File detection:', {
+			url: url.substring(0, 200) + '...',
+			isZip,
+			isS3SignedUrl,
+			urlEndsWithZip: url.toLowerCase().endsWith('.zip')
+		});
+
+		// For ZIP files, use ZIP loading approach (priority over S3 detection)
 		if (isZip) {
+			console.log('Using ZIP loading approach');
 			return this.loadZipFile(url, rootPath, assetMap);
 		}
 
 		// For S3 signed URLs, use a custom loading approach
 		if (isS3SignedUrl) {
+			console.log('Using S3 loading approach');
 			return this.loadS3SignedUrl(url, rootPath, assetMap);
 		}
 
