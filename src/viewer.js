@@ -467,17 +467,35 @@ export class Viewer {
 					
 					// Set up URL modifier to use extracted files
 					MANAGER.setURLModifier((assetUrl, path) => {
+						console.log('URLModifier called with:', { assetUrl, path });
+						
 						// Decode the URL in case it's encoded
 						const decodedUrl = decodeURI(assetUrl);
 						
-						// Check if we have this file in our extracted files
+						// Extract just the filename from the URL
+						const fileName = decodedUrl.split('/').pop().split('?')[0];
+						
+						console.log('Looking for file:', fileName, 'in extracted files:', Array.from(extractedFiles.keys()));
+						
+						// Check if we have this file in our extracted files (by filename)
+						if (extractedFiles.has(fileName)) {
+							const file = extractedFiles.get(fileName);
+							const blobURL = URL.createObjectURL(file);
+							blobURLs.push(blobURL);
+							console.log('Found file in ZIP, using blob URL:', blobURL);
+							return blobURL;
+						}
+						
+						// Also check with the full decoded URL
 						if (extractedFiles.has(decodedUrl)) {
 							const file = extractedFiles.get(decodedUrl);
 							const blobURL = URL.createObjectURL(file);
 							blobURLs.push(blobURL);
+							console.log('Found file in ZIP (full path), using blob URL:', blobURL);
 							return blobURL;
 						}
 						
+						console.log('File not found in ZIP, using original URL:', assetUrl);
 						// If not found, return the original URL
 						return assetUrl;
 					});
